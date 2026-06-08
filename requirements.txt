@@ -1,4 +1,4 @@
 Flask==3.0.2
-supabase==2.3.7
+supabase>=2.20.0
 twilio==9.0.4
 werkzeug==3.0.1
