@@ -13,21 +13,38 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 def webhook():
     data = request.json
     
-    # Extract transcript and summary
-    transcript = data.get("message", {}).get("transcript", "")
-    summary = data.get("message", {}).get("summary", "No summary provided.")
-    
-    # Use the safer extraction for Vapi data
-    customer_data = data.get("customer", {})
-    caller_name = customer_data.get("name") or data.get("call", {}).get("customer", {}).get("name", "Unknown Caller")
-    phone = customer_data.get("number") or data.get("call", {}).get("customer", {}).get("number", "Unknown Number")
+    # 1. FIXED: Only insert data on the final summary report to stop the 36-row duplication
+    message_type = data.get("type") or data.get("message", {}).get("type")
+    if message_type != "end-of-call-report":
+        # Politely tell Vapi we received the update, but don't write to Supabase yet
+        return jsonify({"status": "ignored", "message": "Not the final report"}), 200
 
-    # Mapping to your Supabase table columns
+    # Extract transcript and summary
+    message_obj = data.get("message", {})
+    transcript = message_obj.get("transcript", "")
+    summary = message_obj.get("summary", "No summary provided.")
+    
+    # Extract customer contact details safely
+    customer_data = data.get("customer", {}) or message_obj.get("customer", {})
+    caller_name = customer_data.get("name")
+    phone = customer_data.get("number")
+
+    # 2. FIXED: Fallback for Web Sandbox Chats so names don't show up as 'Unknown'
+    if not caller_name or caller_name == "Unknown Caller":
+        # Look at Vapi's structured extraction variables if available
+        caller_name = data.get("call", {}).get("analysis", {}).get("structuredData", {}).get("name")
+        if not caller_name:
+            caller_name = "Web Sandbox User" # Tells you clearly it was a browser test
+
+    if not phone or phone == "Unknown Number":
+        phone = data.get("call", {}).get("customer", {}).get("number", "Web Chat Session")
+
+    # Final data package mapping perfectly to your database columns
     new_booking = {
         "client_name": "Plum Home Services",
         "caller_name": caller_name,
         "phone": phone,
-        "booking_details": f"Transcript: {transcript}\n\nSummary: {summary}",
+        "booking_details": f"Summary: {summary}\n\nTranscript: {transcript}",
         "lead_status": "valid",
         "lead_value": 0
     }
@@ -38,6 +55,7 @@ def webhook():
         return jsonify({"status": "success", "data": response.data}), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
 
 
 @app.route('/', methods=['GET'])
